@@ -1,0 +1,203 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <dirent.h>
+#include <unistd.h>
+#include <ctype.h>
+#include <sys/types.h>
+#include <sys/wait.h>
+#include <pthread.h>
+#include <time.h>
+#include <sys/resource.h>
+
+#define MAX_WORD_LENGTH 50  // Maximum length of a word
+#define TOP_WORDS 50        // Number of top frequent words to display
+#define MAX_FILES 100       // Maximum number of files to process
+#define MAX_WORDS 1000      // Maximum number of unique words to track
+
+// Structure to store word frequency
+typedef struct {
+    char word[MAX_WORD_LENGTH];  // Word string
+    int count;                   // Count of occurrences of the word
+} WordFreq;
+
+// Comparison function for sorting word frequencies in descending order
+int compare_word_freq(const void *a, const void *b) {
+    return ((WordFreq *)b)->count - ((WordFreq *)a)->count;  // Sort based on word count
+}
+
+// Function to count word frequency in a file (single-threaded)
+void count_word_frequency_single(const char *filename) {
+    FILE *file = fopen(filename, "r");  // Open the file for reading
+    if (!file) {
+        perror("Error opening file");  // Print error if file cannot be opened
+        return;
+    }
+
+    WordFreq local_word_freq[MAX_WORDS];  // Array to store word frequencies
+    int local_word_count = 0;  // Track number of unique words
+
+    char word[MAX_WORD_LENGTH];  // Buffer to store each word
+    // Read words from the file and count their occurrences
+    while (fscanf(file, "%49s", word) == 1) {  // Read words with max length 49
+        // Convert word to lowercase
+        for (char *p = word; *p; ++p) *p = tolower(*p);
+        
+        // Check if the word is already in the list
+        int found = 0;
+        for (int i = 0; i < local_word_count; i++) {
+            if (strcmp(local_word_freq[i].word, word) == 0) {
+                local_word_freq[i].count++;  // Increment count if word found
+                found = 1;
+                break;
+            }
+        }
+        // If the word is not found, add it to the list
+        if (!found && local_word_count < MAX_WORDS) {
+            strcpy(local_word_freq[local_word_count].word, word);
+            local_word_freq[local_word_count].count = 1;
+            local_word_count++;
+        }
+    }
+    fclose(file);  // Close the file
+
+    // Sort the local word frequency array by count
+    qsort(local_word_freq, local_word_count, sizeof(WordFreq), compare_word_freq);
+
+    // Print the top 50 words for this file
+    printf("Top %d words in file: %s\n", TOP_WORDS, filename);
+    for (int i = 0; i < TOP_WORDS && i < local_word_count; i++) {
+        printf("%s: %d\n", local_word_freq[i].word, local_word_freq[i].count);
+    }
+    printf("\n");
+}
+
+// Function to count word frequency in a file (multi-threaded version)
+// Similar to single-threaded but meant for multithreading demonstration
+void* count_word_frequency_multi(void* arg) {
+    const char *filename = (const char *)arg;
+
+    FILE *file = fopen(filename, "r");  // Open the file for reading
+    if (!file) {
+        perror("Error opening file");  // Print error if file cannot be opened
+        return NULL;
+    }
+
+    WordFreq local_word_freq[MAX_WORDS];  // Array to store word frequencies
+    int local_word_count = 0;  // Track number of unique words
+
+    char word[MAX_WORD_LENGTH];  // Buffer to store each word
+    // Read words from the file and count their occurrences
+    while (fscanf(file, "%49s", word) == 1) {
+        // Convert word to lowercase
+        for (char *p = word; *p; ++p) *p = tolower(*p);
+
+        // Check if the word is already in the list
+        int found = 0;
+        for (int i = 0; i < local_word_count; i++) {
+            if (strcmp(local_word_freq[i].word, word) == 0) {
+                local_word_freq[i].count++;  // Increment count if word found
+                found = 1;
+                break;
+            }
+        }
+        // If the word is not found, add it to the list
+        if (!found && local_word_count < MAX_WORDS) {
+            strcpy(local_word_freq[local_word_count].word, word);
+            local_word_freq[local_word_count].count = 1;
+            local_word_count++;
+        }
+    }
+    fclose(file);  // Close the file
+
+    // Sort the local word frequency array by count
+    qsort(local_word_freq, local_word_count, sizeof(WordFreq), compare_word_freq);
+
+    // Print the top 50 words for this file
+    printf("Top %d words in file: %s\n", TOP_WORDS, filename);
+    for (int i = 0; i < TOP_WORDS && i < local_word_count; i++) {
+        printf("%s: %d\n", local_word_freq[i].word, local_word_freq[i].count);
+    }
+    printf("\n");
+
+    return NULL;
+}
+
+// Function to track CPU time and memory usage
+void track_cpu_memory_usage(const char *label, clock_t start_time, clock_t end_time) {
+    struct rusage usage;
+    getrusage(RUSAGE_SELF, &usage);  // Get resource usage for the process
+
+    double cpu_time_used = ((double)(end_time - start_time)) / CLOCKS_PER_SEC;
+    long memory_used = usage.ru_maxrss;  // Get memory usage in KB
+
+    // Print CPU time and memory usage
+    printf("%s - CPU time: %f seconds, Memory usage: %ld KB\n", label, cpu_time_used, memory_used);
+}
+
+int main(int argc, char *argv[]) {
+    if (argc != 2) {  // Check if the directory argument is provided
+        fprintf(stderr, "Usage: %s <directory>\n", argv[0]);
+        return 1;
+    }
+
+    char *directory = argv[1];
+    DIR *dir = opendir(directory);  // Open the directory
+    if (dir == NULL) {
+        perror("Error opening directory");  // Print error if directory can't be opened
+        return 1;
+    }
+
+    struct dirent *entry;
+
+    // Step 1: Collect all file paths in an array
+    char filepaths[MAX_FILES][512];
+    int file_count = 0;
+
+    // Read directory and gather file paths
+    while ((entry = readdir(dir)) != NULL) {
+        if (entry->d_type == DT_REG) {  // Process only regular files
+            snprintf(filepaths[file_count], sizeof(filepaths[file_count]), "%s/%s", directory, entry->d_name);
+            file_count++;
+            if (file_count >= MAX_FILES) {
+                break;  // Limit to MAX_FILES
+            }
+        }
+    }
+    closedir(dir);  // Close the directory
+
+    // Step 2: Process each file in single-threaded and multi-threaded mode
+    for (int i = 0; i < file_count; i++) {
+        // Single-threaded processing using fork
+        clock_t start_time = clock();  // Start CPU time measurement
+        pid_t pid = fork();  // Create a child process
+        if (pid == 0) {  // Child process
+            count_word_frequency_single(filepaths[i]);  // Single-threaded word counting
+            exit(0);  // Exit child process
+        } else if (pid > 0) {  // Parent process
+            wait(NULL);  // Wait for the child to finish
+            clock_t end_time = clock();  // End CPU time measurement
+
+            // Track CPU time and memory usage for single-threaded process
+            track_cpu_memory_usage("Single-threaded", start_time, end_time);
+        } else {
+            perror("fork failed");  // Error handling for fork failure
+            return 1;
+        }
+
+        // Multi-threaded processing
+        start_time = clock();  // Start CPU time measurement for multi-threaded
+        pthread_t thread;  // Create a thread
+        if (pthread_create(&thread, NULL, count_word_frequency_multi, (void *)filepaths[i]) != 0) {
+            perror("Failed to create thread");  // Error handling for thread creation
+            continue;
+        }
+        pthread_join(thread, NULL);  // Wait for the thread to finish
+        clock_t end_time = clock();  // End CPU time measurement
+
+        // Track CPU time and memory usage for multi-threaded process
+        track_cpu_memory_usage("Multi-threaded", start_time, end_time);
+    }
+
+    return 0;
+}
