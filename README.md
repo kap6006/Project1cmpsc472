@@ -9,6 +9,13 @@ The program implements counting the top 50 words in each file two different ways
 
 For the other approach, a single process is created (either by the parent process or as a child process), and multiple threads are created within that process to count words in parallel. The file is either logically divided into parts, and each thread handles a part of the file, or all threads can work on the file simultaneously. The program uses the POSIX threads (pthreads) library to create multiple threads within a process. Each thread can be assigned a portion of the file to process or can work collaboratively to count words. One advantage is the lower overhead than creating new processes since thread creation is faster. Another advantage is that multiple threads can share memory within a process, which can reduce memory usage. However, multiple threads require careful management of shared data so you need synchronization mechanisms like mutexes. Another disadvantage is it is limited by the number of CPU cores available making this approaches effectiveness hardware dependant.
 
+## How to Use Program
+During testing and implementation I ended up using Google Colab. Here are the directions to run the program
+
+First download the C code from the repository. 
+
+
+
 ## Project Requirements
 
 ### Process management
